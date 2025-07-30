@@ -5,6 +5,10 @@
 > ✅ 支持平台：Debian / Ubuntu VPS 或本地环境  
 > 📦 依赖工具：`mkvtoolnix`（包含 `mkvmerge`）
 
+零基础更详细的使用方法以及更多应用教程，请前往微信公众号：手把手教程 查看
+
+<img src="assets/preview.jpg" alt="公众号" width="300">
+
 ---
 
 ## 🚀 快速开始
