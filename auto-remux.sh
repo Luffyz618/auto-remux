@@ -2,89 +2,95 @@
 
 set -e
 
-# === 检查并安装 mkvmerge ===
-check_and_install_mkvtoolnix() {
-  if ! command -v mkvmerge &> /dev/null; then
-    echo "🔍 未检测到 mkvmerge，正在安装 mkvtoolnix..."
-    if [ -f /etc/debian_version ]; then
-      sudo apt update
-      sudo apt install -y mkvtoolnix mkvtoolnix-gui
+# 检查 mkvmerge 是否安装
+check_mkvmerge() {
+    if ! command -v mkvmerge &>/dev/null; then
+        echo "🛠️ 检测到未安装 mkvmerge，正在尝试安装..."
+        if [[ -f /etc/debian_version ]]; then
+            sudo apt update && sudo apt install -y mkvtoolnix
+        elif [[ -f /etc/redhat-release ]]; then
+            sudo dnf install -y mkvtoolnix
+        else
+            echo "❌ 不支持的 Linux 发行版，请手动安装 mkvtoolnix。" >&2
+            exit 1
+        fi
+
+        # 安装后再次检查
+        if ! command -v mkvmerge &>/dev/null; then
+            echo "❌ mkvmerge 安装失败，请手动检查安装源或网络。" >&2
+            exit 1
+        else
+            echo "✅ mkvmerge 安装成功。"
+        fi
     else
-      echo "❌ 当前系统暂不支持自动安装 mkvtoolnix，请手动安装。"
-      exit 1
+        echo "✅ 已检测到 mkvmerge。"
     fi
-  fi
 }
 
-# === 主函数 ===
-main() {
-  check_and_install_mkvtoolnix
+# 获取 BDMV 主 m2ts 文件
+get_main_m2ts() {
+    local stream_dir="$1/BDMV/STREAM"
+    find "$stream_dir" -type f -name "*.m2ts" -exec du -b {} + | sort -nr | head -n 1 | cut -f2
+}
 
-  echo "📁 请输入包含多个 BDMV 文件夹的【根目录路径】："
-  read -rp "路径: " ROOT_DIR
+# 执行 remux 操作
+remux_m2ts() {
+    local input_dir="$1"
+    local output_dir="$2"
 
-  if [ ! -d "$ROOT_DIR" ]; then
-    echo "❌ 目录不存在：$ROOT_DIR"
+    echo "📀 正在处理：$input_dir"
+
+    main_m2ts=$(get_main_m2ts "$input_dir")
+    if [[ -z "$main_m2ts" ]]; then
+        echo "⚠️ 未找到 .m2ts 文件，跳过 $input_dir"
+        return
+    fi
+
+    title=$(basename "$input_dir")
+    output_file="$output_dir/${title}.mkv"
+
+    echo "🎬 提取主影片：$main_m2ts"
+    echo "📤 输出到：$output_file"
+
+    mkvmerge -o "$output_file" "$main_m2ts"
+    echo "✅ 完成：$output_file"
+}
+
+### 主流程开始 ###
+check_mkvmerge
+
+# 第一步：选择 BDMV 文件夹所在目录
+read -rp "📁 请输入存放 BDMV 文件夹的主目录路径: " base_dir
+[[ ! -d "$base_dir" ]] && echo "❌ 目录不存在。" && exit 1
+
+# 第二步：列出所有包含 BDMV 的子目录
+mapfile -t bdmv_dirs < <(find "$base_dir" -type d -name "BDMV" -exec dirname {} \;)
+if [[ ${#bdmv_dirs[@]} -eq 0 ]]; then
+    echo "❌ 未找到任何 BDMV 结构。"
     exit 1
-  fi
+fi
 
-  echo "🔍 正在扫描 $ROOT_DIR 下的 BDMV 文件夹..."
+echo "🔍 检测到以下 BDMV 文件夹："
+for i in "${!bdmv_dirs[@]}"; do
+    echo "$((i + 1)). $(basename "${bdmv_dirs[$i]}")"
+done
 
-  # 搜索所有包含 BDMV/STREAM 的文件夹
-  mapfile -t BDMV_DIRS < <(find "$ROOT_DIR" -type d -path "*/BDMV/STREAM" -printf "%h\n" | sort)
+# 第三步：选择编号
+read -rp "请输入要 remux 的编号（输入 0 表示全部）: " choice
 
-  if [ "${#BDMV_DIRS[@]}" -eq 0 ]; then
-    echo "❌ 未找到任何有效的 BDMV 文件夹。"
-    exit 1
-  fi
+# 第四步：选择输出目录
+read -rp "📤 请输入输出 MKV 文件的目录路径: " output_dir
+mkdir -p "$output_dir"
 
-  echo "📂 发现以下 BDMV 文件夹："
-  for i in "${!BDMV_DIRS[@]}"; do
-    echo "$((i+1)). $(basename "${BDMV_DIRS[$i]}")"
-  done
-
-  echo "✳️ 请输入要 Remux 的编号（多个用空格，输入 0 表示全部）："
-  read -rp "编号: " CHOICE
-
-  if [ "$CHOICE" == "0" ]; then
-    SELECTED_DIRS=("${BDMV_DIRS[@]}")
-  else
-    SELECTED_DIRS=()
-    for n in $CHOICE; do
-      index=$((n-1))
-      if [ "$index" -ge 0 ] && [ "$index" -lt "${#BDMV_DIRS[@]}" ]; then
-        SELECTED_DIRS+=("${BDMV_DIRS[$index]}")
-      else
-        echo "⚠️ 编号 $n 无效，跳过。"
-      fi
+# 第五步：执行转换
+if [[ "$choice" == "0" ]]; then
+    for dir in "${bdmv_dirs[@]}"; do
+        remux_m2ts "$dir" "$output_dir"
     done
-  fi
+else
+    index=$((choice - 1))
+    [[ -z "${bdmv_dirs[$index]}" ]] && echo "❌ 无效编号。" && exit 1
+    remux_m2ts "${bdmv_dirs[$index]}" "$output_dir"
+fi
 
-  echo "📤 请输入 MKV 文件的输出目录："
-  read -rp "路径: " OUTPUT_DIR
-  mkdir -p "$OUTPUT_DIR"
-
-  for BDMV_PATH in "${SELECTED_DIRS[@]}"; do
-    STREAM_DIR="$BDMV_PATH/BDMV/STREAM"
-    MOVIE_NAME=$(basename "$BDMV_PATH")
-
-    echo "🎬 正在处理：$MOVIE_NAME"
-
-    MAIN_M2TS=$(find "$STREAM_DIR" -type f -name "*.m2ts" -printf "%s %p\n" | sort -nr | head -n1 | awk '{print $2}')
-
-    if [ -z "$MAIN_M2TS" ]; then
-      echo "❌ $MOVIE_NAME 未找到主影片 .m2ts 文件，跳过。"
-      continue
-    fi
-
-    OUTPUT_PATH="$OUTPUT_DIR/${MOVIE_NAME}.mkv"
-    echo "🔧 使用 mkvmerge Remux: $(basename "$MAIN_M2TS")"
-    mkvmerge -o "$OUTPUT_PATH" "$MAIN_M2TS"
-
-    echo "✅ 已输出：$OUTPUT_PATH"
-  done
-
-  echo "🎉 所有任务完成！"
-}
-
-main
+echo "🎉 所有任务完成。"
