@@ -5,18 +5,46 @@
 
 check_mkvmerge() {
     if ! command -v mkvmerge &>/dev/null; then
-        echo "🔍 mkvmerge 未安装，尝试安装 mkvtoolnix..."
+        echo "🔍 mkvmerge 未安装，添加 MKVToolNix 官方仓库并安装最新版..."
+
+        # 基础工具（保证有证书、curl、gpg、发行版信息）
         sudo apt update
-        sudo apt install -y mkvtoolnix
+        sudo apt install -y ca-certificates curl gnupg lsb-release
+
+        # 准备 keyring 并导入官方 GPG
+        KEYRING="/etc/apt/keyrings/mkvtoolnix.gpg"
+        sudo install -d -m 0755 /etc/apt/keyrings
+        curl -fsSL https://mkvtoolnix.download/gpg-pub-moritzbunkus.txt \
+          | sudo gpg --dearmor -o "$KEYRING"
+        sudo chmod 0644 "$KEYRING"
+
+        # 检测 Debian 代号（bookworm/bullseye/trixie 等）
+        if [ -r /etc/os-release ]; then
+            . /etc/os-release
+            CODENAME="${VERSION_CODENAME:-}"
+        fi
+        if [ -z "$CODENAME" ]; then
+            CODENAME="$(lsb_release -cs 2>/dev/null || echo bookworm)"
+        fi
+
+        # 写入官方源
+        echo "deb [signed-by=$KEYRING] https://mkvtoolnix.download/debian/ $CODENAME main" \
+          | sudo tee /etc/apt/sources.list.d/mkvtoolnix.download.list >/dev/null
+        echo "deb-src [signed-by=$KEYRING] https://mkvtoolnix.download/debian/ $CODENAME main" \
+          | sudo tee -a /etc/apt/sources.list.d/mkvtoolnix.download.list >/dev/null
+
+        # 安装最新版
+        sudo apt update
+        sudo apt install -y mkvtoolnix mkvtoolnix-gui || sudo apt install -y mkvtoolnix
 
         if ! command -v mkvmerge &>/dev/null; then
             echo "❌ mkvmerge 安装失败，请手动安装 mkvtoolnix 后再运行此脚本。"
             exit 1
         else
-            echo "✅ mkvmerge 安装成功。"
+            echo "✅ mkvmerge 安装成功：$(mkvmerge --version | head -n1)"
         fi
     else
-        echo "✅ 已检测到 mkvmerge。"
+        echo "✅ 已检测到 mkvmerge：$(mkvmerge --version | head -n1)"
     fi
 }
 
